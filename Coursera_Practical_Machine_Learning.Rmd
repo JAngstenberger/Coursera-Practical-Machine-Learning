@@ -1,0 +1,197 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Jonas A."
+date: "Saturday, July 25, 2015"
+output:
+  html_document:
+    keep_md: yes
+---
+
+The goal of this project is to create a machine-learning algorithm that can correctly identify the quality of barbell bicep curls by using data from belt, forearm, arm, and dumbbell monitors. There are five classifications of this exercise, one method is the correct form of the exercise (Class A) while the other four are common mistakes: throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). <http://groupware.les.inf.puc-rio.br/har#ixzz3PO5pnm1R>.
+
+#Load and pre-process data
+
+The two data files are downloaded from <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv> (training set) and <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv> (testing set) and stored in the __R Working Directory__, which is the source location for the R code. During the loading process missing values are set to _NA_.
+
+For reproducability the seed is set to _05111982_.
+
+```{r}
+library(caret, quietly=TRUE)
+library(rattle, quietly=TRUE)
+library(ggplot2, quietly=TRUE)
+library(grid, quietly=TRUE)
+library(gridExtra, quietly=TRUE)
+
+set.seed(05111982)
+
+pml_train <- read.csv(file = 'pml-training.csv',
+                      na.strings = c('NA','#DIV/0!',''))
+pml_test <- read.csv(file = 'pml-testing.csv',
+                     na.strings = c('NA','#DIV/0!',''))
+
+```
+
+It is important to compare the dataset which is done by comparing the dimensions.
+
+```{r}
+
+dim(pml_train)
+dim(pml_test)
+
+```
+
+The summary of both test sets (not shown) reveal that several parameters / columns only have missing / NA values. These parameters / columns are removed in both data sets and a comparison for the dimensions performed.
+
+```{r}
+#summary(pml_train)
+#summary(pml_test)
+
+pml_train <- pml_train[,colSums(is.na(pml_train))==0]
+pml_test <- pml_test[,colSums(is.na(pml_test))==0]
+
+dim(pml_train)
+dim(pml_test)
+
+```
+
+It might be the case that several values do not really change for the different classes. To detect this a near zero variation analysis is performed and the parameter "new_window" is removed in both data sets. This changes both datasets equally.
+
+```{r}
+nearZeroVar(pml_train, saveMetrics=TRUE)
+
+pml_train$new_window=NULL
+pml_test$new_window=NULL
+
+dim(pml_train)
+dim(pml_test)
+
+```
+
+#Partioning the training set
+
+The training data set is divided in a training and testing data set. The new training data set contains 60% of the former training set and is used to train the model, whereas the new testing data set contains 40% of the former training set and is used to test the model.
+
+```{r}
+inTrain <- createDataPartition(y=pml_train$classe, p=0.6, list=FALSE)
+myTraining <- pml_train[inTrain, ]
+myTesting <- pml_train[-inTrain, ]
+dim(myTraining)
+dim(myTesting)
+
+```
+
+The following histogram shows the frequency of the different classes in the new training data set allowing an estimate for the outcome of the prediction model.
+
+```{r}
+ggplot(myTraining, aes(x = classe)) + ggtitle("Histogram of Classe Frequency in Training Data") + xlab("Exercise Classe") + ylab("Frequency") + geom_histogram()
+
+```
+
+#Prediction with Decision Tree
+
+As the outcome is factorial the first model is done by the classification tree algorithm.
+
+Most probably the first benchmark is the model accuracy, which is with approx. 66% kind of disappointing. If the final model is checked more carefully it gets obvious that the X variable (which is the id) might not be the best parameter / variable for the prediction.
+
+Additionally, the confusion matrix shows that no class C or D are detected in the new testing data set. Having the distribution of the new training set in mind, this prediction model seems to be not very useful. Even more suspicious is the outcome of the prediction for the final test set, resulting in 100% class A.
+
+```{r}
+modFitTree <- train(classe ~ ., method="rpart", data=myTraining)
+print(modFitTree$finalModel)
+fancyRpartPlot(modFitTree$finalModel)
+classepredict <- predict(modFitTree,myTesting)
+confusionMatrix(myTesting$classe,classepredict)
+predict(modFitTree,newdata=pml_test)
+
+```
+
+# Additional pre-processing
+
+For a second prediction with decision tree the parameter / column X (id) is removed in both training and testing data set. Additionally the training data set is divided into a new training and testing data set as before.
+
+```{r}
+
+pml_train$X=NULL
+pml_test$X=NULL
+
+dim(pml_train)
+dim(pml_test)
+
+inTrain <- createDataPartition(y=pml_train$classe, p=0.6, list=FALSE)
+myTraining <- pml_train[inTrain, ]
+myTesting <- pml_train[-inTrain, ]
+dim(myTraining)
+dim(myTesting)
+
+```
+
+#Prediction with Decision Tree
+
+The second decision tree model leads to a much more complex dicision tree. Unfortunately, the confusion matrix shows an even worse accuracy and additionally, no class C is detected. Again, this might not be the best prediction model. 
+
+```{r}
+modFitTree <- train(classe ~ ., method="rpart", data=myTraining)
+print(modFitTree$finalModel)
+fancyRpartPlot(modFitTree$finalModel)
+classepredict <- predict(modFitTree,myTesting)
+confusionMatrix(myTesting$classe,classepredict)
+
+```
+
+#Prediction with Random Forest
+
+Another approach is using random forest with cross validation (4x). The prediction model leads to a confusion matrix with a accuracy of 99.99%.
+
+```{r}
+mod_rf <- train(classe ~ .,
+                data = myTraining, 
+                method = 'rf', 
+                trControl = trainControl(method = "cv", 
+                                         number = 4, 
+                                         allowParallel = TRUE, 
+                                         verboseIter = TRUE))
+pred_rf <- predict(mod_rf,myTesting)
+confusionMatrix(pred_rf,myTesting$classe)
+
+```
+
+To get a better idea how well distributed the predictions are a data frame is created including the prediction from the classification tree (2nd) approach and the random forest approach compared to the results from the subpart of the training data set (my testing data set).
+
+The summary and the figure show clearly that the distribution of the random forest looks very promising, which makes sense as the accuracy of this model is nearly 100% and the out-of sample error is with 1-0.9999 = 0.0001 very low. This model will be used for the final test set prediction.
+
+```{r}
+summary_myTest <- data.frame(classepredict, pred_rf, myTesting$classe)
+colnames(summary_myTest) <- c("Pred_CT", "Pred_RF", "Result")
+
+summary(summary_myTest)
+
+pPred_CT <- ggplot(summary_myTest, aes(x = Pred_CT)) + ggtitle("Histogram of Classe Frequency in Classification Tree Prediction") + xlab("Exercise Classe") + ylab("Frequency") + geom_histogram()
+
+pPred_RF <- ggplot(summary_myTest, aes(x = Pred_RF)) + ggtitle("Histogram of Classe Frequency in Random Forest Prediction") + xlab("Exercise Classe") + ylab("Frequency") + geom_histogram()
+
+pResult <- ggplot(summary_myTest, aes(x = Result)) + ggtitle("Histogram of Classe Frequency in Training Data Set myTesting") + xlab("Exercise Classe") + ylab("Frequency") + geom_histogram(fill="#FF9999", colour="black")
+
+grid.arrange(pPred_CT, pPred_RF, pResult, ncol = 1, main = "Prediction Model Overview")
+
+```
+
+#Random Forest prediction (test set)
+
+The final prediction of the test set is performed and exported into different txt files for the upload.
+
+```{r}
+pred_rf_test <- predict(mod_rf,pml_test)
+
+pred_rf_test
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(pred_rf_test)
+
+```
